@@ -1,4 +1,4 @@
---Creación de la base de datos
+--Creaciï¿½n de la base de datos
 
 USE master
 IF DB_ID('ASADA_SC') IS NOT NULL
@@ -28,7 +28,7 @@ GO
 EXEC sp_helpdb ASADA_SC
 GO
 
---Creación de Auditorias
+--Creaciï¿½n de Auditorias
 
 USE master
 GO
@@ -40,7 +40,7 @@ ALTER DATABASE  ASADA_SC ADD FILEGROUP Auditorias;
 GO
 
 
---Tamaño de los filegroup
+--Tamaï¿½o de los filegroup
 
 ALTER DATABASE ASADA_SC
 ADD FILE
@@ -86,7 +86,7 @@ go
 exec sp_helpfilegroup Historico
 go
 
---Creación de tablas 
+--Creaciï¿½n de tablas 
 
 use ASADA_SC
 go
@@ -178,7 +178,7 @@ CREATE TABLE Tarifa(
     cargo_fijo       DECIMAL(12,2) NOT NULL,
     fecha_ini        DATETIME NOT NULL,
     fecha_fin        DATETIME NULL,
-    id_tipoConexion  INT NOT NULL,                    -- relación con Tipo de Conexión
+    id_tipoConexion  INT NOT NULL,                    -- relaciï¿½n con Tipo de Conexiï¿½n
     CONSTRAINT PK_Tarifa PRIMARY KEY (id_tarifa),
     CONSTRAINT FK_Tarifa_TipoConexion FOREIGN KEY (id_tipoConexion) REFERENCES TipoConexion(id_tipoConexion)
 ) ON Operativo
@@ -221,7 +221,7 @@ CREATE TABLE Factura(
 	 id_abonado          INT NOT NULL,
     id_conexion       INT NOT NULL,
     id_lectura        INT NOT NULL,
-    id_tarifa         INT NOT NULL, -- la tarifa aplicada en el momento de la facturación
+    id_tarifa         INT NOT NULL, -- la tarifa aplicada en el momento de la facturaciï¿½n
     fecha_emision     DATETIME NOT NULL DEFAULT SYSUTCDATETIME(),
     fecha_vencimiento DATETIME NOT NULL,
     CONSTRAINT PK_Factura PRIMARY KEY (id_factura),
@@ -261,7 +261,7 @@ GO
 EXECUTE sp_help Mantenimientos
 GO
 
-/* ---- Tablas históricas / auditoría: ON Historico ---- */
+/* ---- Tablas histï¿½ricas / auditorï¿½a: ON Historico ---- */
 CREATE TABLE MedidorHistorico(
     id_medidor_historico INT IDENTITY(1,1) NOT NULL,
     id_medidor           INT NOT NULL,
@@ -282,7 +282,7 @@ CREATE TABLE DetalleMantenimiento(
     id_detalle          INT IDENTITY(1,1) NOT NULL,
     id_mantenimiento    INT NOT NULL,
     descripcion_trabajo VARCHAR(255) NOT NULL,
-    id_empleado         INT  NOT NULL,  -- quien realizó
+    id_empleado         INT  NOT NULL,  -- quien realizï¿½
     CONSTRAINT PK_DetalleMantenimiento PRIMARY KEY (id_detalle),
     CONSTRAINT FK_DetMant_Mant FOREIGN KEY (id_mantenimiento) REFERENCES Mantenimientos(id_mantenimiento),
     CONSTRAINT FK_DetMant_Empleado FOREIGN KEY (id_empleado) REFERENCES Empleado(id_empleado)
@@ -469,3 +469,177 @@ CREATE TABLE Audit_Empleado (
   FechaDeEjecucion DATETIME   NOT NULL DEFAULT SYSUTCDATETIME()
 ) ON Auditorias
 GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_actualizarAbonado
+  @id_abonado INT,
+  @direccion  VARCHAR(255),
+  @telefono   VARCHAR(20)
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  UPDATE dbo.Abonado
+  SET direccion = @direccion,
+      telefono  = @telefono
+  WHERE id_abonado = @id_abonado;
+END;
+GO
+
+
+
+
+-- Evitar borrado si tiene facturas
+CREATE OR ALTER TRIGGER dbo.trg_no_delete_abonado_con_facturas
+ON dbo.Abonado
+INSTEAD OF DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+  IF EXISTS (
+    SELECT 1
+      FROM deleted d
+      JOIN dbo.Factura f ON f.id_abonado = d.id_abonado
+  )
+  BEGIN
+    RAISERROR('No se puede eliminar el abonado: posee facturas.',16,1);
+    RETURN;
+  END;
+
+  DELETE a
+    FROM dbo.Abonado a
+    JOIN deleted d ON d.id_abonado = a.id_abonado;
+END;
+GO
+
+-- AuditorÃ­a abonado
+CREATE OR ALTER TRIGGER dbo.trg_auditoriaAbonado
+ON dbo.Abonado
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  /* ============== INSERT ============== */
+  INSERT INTO dbo.Audit_Abonado
+  (
+      NombreTabla, Operacion, IdAbonado,
+      Nombre, Ape1, Ape2, Direccion, Telefono,
+      Correo,  -- en Abonado no existe -> guardamos NULL
+      Estado,  -- en Abonado no existe -> guardamos NULL
+      RealizadoPor
+      -- FechaDeEjecucion usa DEFAULT (SYSUTCDATETIME())
+  )
+  SELECT
+      'Abonado'       AS NombreTabla,
+      'INSERT'        AS Operacion,
+      i.id_abonado,
+      i.nombre,
+      i.ape1,
+      i.ape2,
+      i.direccion,
+      i.telefono,
+      NULL            AS Correo,     -- <--- reemplaza por i.correo_electronico si existe
+      NULL            AS Estado,     -- <--- reemplaza por i.estado si existe
+      SYSTEM_USER     AS RealizadoPor
+  FROM inserted i
+  LEFT JOIN deleted d
+    ON d.id_abonado = i.id_abonado
+  WHERE d.id_abonado IS NULL;
+
+  /* ============== UPDATE ============== */
+  INSERT INTO dbo.Audit_Abonado
+  (
+      NombreTabla, Operacion, IdAbonado,
+      Nombre, Ape1, Ape2, Direccion, Telefono,
+      Correo,
+      Estado,
+      RealizadoPor
+  )
+  SELECT
+      'Abonado',
+      'UPDATE',
+      i.id_abonado,
+      i.nombre,
+      i.ape1,
+      i.ape2,
+      i.direccion,
+      i.telefono,
+      NULL,           -- <--- reemplaza por i.correo_electronico si existe
+      NULL,           -- <--- reemplaza por i.estado si existe
+      SYSTEM_USER
+  FROM inserted i
+  INNER JOIN deleted d
+    ON d.id_abonado = i.id_abonado;
+
+  /* ============== DELETE ============== */
+  INSERT INTO dbo.Audit_Abonado
+  (
+      NombreTabla, Operacion, IdAbonado,
+      Nombre, Ape1, Ape2, Direccion, Telefono,
+      Correo,
+      Estado,
+      RealizadoPor
+  )
+  SELECT
+      'Abonado',
+      'DELETE',
+      d.id_abonado,
+      d.nombre,
+      d.ape1,
+      d.ape2,
+      d.direccion,
+      d.telefono,
+      NULL,           -- <--- reemplaza por d.correo_electronico si existe
+      NULL,           -- <--- reemplaza por d.estado si existe
+      SYSTEM_USER
+  FROM deleted d
+  LEFT JOIN inserted i
+    ON i.id_abonado = d.id_abonado
+  WHERE i.id_abonado IS NULL;
+END;
+GO
+
+
+
+-- Abonados con facturas pendientes/vencidas
+CREATE OR ALTER VIEW dbo.vw_facturaAbonado
+AS
+SELECT 
+    a.id_abonado,
+    a.nombre,
+    a.ape1,
+    a.ape2,
+    f.id_factura,
+    f.fecha_emision,
+    f.fecha_vencimiento,
+    -- Calculamos estado segÃºn vencimiento
+    CASE 
+        WHEN f.fecha_vencimiento < GETDATE() THEN 'Vencida'
+        ELSE 'Pendiente'
+    END AS estado
+FROM dbo.Factura AS f
+INNER JOIN dbo.Abonado AS a 
+    ON a.id_abonado = f.id_abonado;
+GO
+
+
+-- Abonados con mayor recargo acumulado
+CREATE OR ALTER VIEW dbo.vw_morosidadAbonado
+AS
+SELECT 
+    a.id_abonado,
+    a.nombre,
+    a.ape1,
+    a.ape2,
+    SUM(ISNULL(p.recargo_mora, 0)) AS total_recargos
+FROM dbo.Abonado AS a
+LEFT JOIN dbo.Factura AS f 
+    ON f.id_abonado = a.id_abonado
+LEFT JOIN dbo.Pago AS p 
+    ON p.id_factura = f.id_factura
+GROUP BY 
+    a.id_abonado, a.nombre, a.ape1, a.ape2
+HAVING 
+    SUM(ISNULL(p.recargo_mora, 0)) > 0;
+GO
+
