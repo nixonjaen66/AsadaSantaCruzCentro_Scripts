@@ -554,7 +554,66 @@ BEGIN
 END
 GO
 
--- Insert tipo de conexi�n (Daniel)
+-- sp Auditoria Abonado (Daniel)
+
+USE ASADA_SC;
+GO
+
+CREATE OR ALTER PROCEDURE dbo.sp_RegistrarAuditoriaAbonado
+    @NombreTabla VARCHAR(30),
+    @Operacion VARCHAR(10),
+    @IdAbonado INT = NULL,
+    @Estado BIT = NULL,
+    @RealizadoPor VARCHAR(100) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    INSERT INTO dbo.Audit_Abonado (
+        NombreTabla,
+        Operacion,
+        IdAbonado,
+        Estado,
+        RealizadoPor,
+        FechaDeEjecucion
+    )
+    VALUES (
+        @NombreTabla,
+        @Operacion,
+        @IdAbonado,
+        @Estado,
+        @RealizadoPor,
+        SYSUTCDATETIME()
+    );
+END
+GO
+
+
+-- sp para buscar abonado por correo (Daniel)
+
+CREATE OR ALTER PROCEDURE dbo.sp_BuscarAbonadoPorCorreo
+   @CorreoElectronico VARCHAR(100)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT
+        id_abonado AS IdAbonado,
+        nombre AS Nombre,
+        ape1 AS Ape1,
+        ape2 AS Ape2,
+        direccion AS Direccion,
+        telefono AS Telefono,
+        cedula AS Cedula,
+        correo_electronico AS CorreoElectronico,
+        fecha_inicio AS FechaInicio,
+        rol AS Rol
+    FROM dbo.Abonado
+    WHERE correo_electronico = @CorreoElectronico;
+END
+GO
+
+-- sp para agregar tipo de conexión (Daniel)
 
 CREATE PROCEDURE AgregarTipoConexion
     @nombre VARCHAR(20)
@@ -576,7 +635,7 @@ BEGIN
 END
 GO
 
--- Update tipo de conexi�n (Daniel)
+-- sp tipo de conexi�n (Daniel)
 
 CREATE PROCEDURE ActualizarTipoConexion
     @idTipoConexion INT,
