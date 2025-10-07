@@ -511,6 +511,160 @@ BEGIN
 END;
 GO
 
+
+--Insert Abonado (Daniel) 
+
+USE ASADA_SC;
+GO
+
+IF OBJECT_ID('dbo.CrearAbonado', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.CrearAbonado;
+GO
+
+CREATE PROCEDURE dbo.CrearAbonado
+    @cedula VARCHAR(20),
+    @nombre VARCHAR(50),
+    @ape1 VARCHAR(20),
+    @ape2 VARCHAR(20) = NULL,
+    @direccion VARCHAR(255),
+    @telefono VARCHAR(20) = NULL,
+    @correo_electronico VARCHAR(100) = NULL,
+    @contrasena VARCHAR(255),
+    @rol VARCHAR(20) = 'Abonado'
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar cédula única
+    IF EXISTS (SELECT 1 FROM Abonado WHERE cedula = @cedula)
+    BEGIN
+        RAISERROR('El abonado con cédula %s ya existe.', 16, 1, @cedula);
+        RETURN;
+    END
+
+    -- Validar correo único
+    IF @correo_electronico IS NOT NULL AND EXISTS (SELECT 1 FROM Abonado WHERE correo_electronico = @correo_electronico)
+    BEGIN
+        RAISERROR('El correo electrónico %s ya está en uso.', 16, 1, @correo_electronico);
+        RETURN;
+    END
+
+    INSERT INTO Abonado (cedula, nombre, ape1, ape2, direccion, telefono, correo_electronico, contrasena, rol, fecha_inicio)
+    VALUES (@cedula, @nombre, @ape1, @ape2, @direccion, @telefono, @correo_electronico, @contrasena, @rol, SYSDATETIME());
+END
+GO
+
+-- Insert tipo de conexi�n (Daniel)
+
+CREATE PROCEDURE AgregarTipoConexion
+    @nombre VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF EXISTS (SELECT 1 FROM TipoConexion WHERE nombre = @nombre)
+    BEGIN
+        RAISERROR('El nombre del TipoConexion ya existe', 16, 1);
+        RETURN;
+    END
+
+    INSERT INTO TipoConexion (nombre, estado)
+    VALUES (@nombre, 1);
+
+
+    SELECT SCOPE_IDENTITY() AS idTipoConexion;
+END
+GO
+
+-- Update tipo de conexi�n (Daniel)
+
+CREATE PROCEDURE ActualizarTipoConexion
+    @idTipoConexion INT,
+    @nuevoNombre VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM TipoConexion WHERE id_tipoConexion = @idTipoConexion)
+    BEGIN
+        RAISERROR('El TipoConexion con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    IF EXISTS (SELECT 1 FROM TipoConexion WHERE nombre = @nuevoNombre AND id_tipoConexion <> @idTipoConexion)
+    BEGIN
+        RAISERROR('El nombre del TipoConexion ya existe', 16, 1);
+        RETURN;
+    END
+
+    UPDATE TipoConexion
+    SET nombre = @nuevoNombre
+    WHERE id_tipoConexion = @idTipoConexion;
+
+    SELECT id_tipoConexion, nombre 
+    FROM TipoConexion 
+    WHERE id_tipoConexion = @idTipoConexion;
+END
+GO
+
+-- Update estado tipo de conexi�n (Daniel)
+
+CREATE PROCEDURE ActualizarEstadoTipoConexion
+    @idTipoConexion INT,
+    @nuevoEstado BIT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM TipoConexion WHERE id_tipoConexion = @idTipoConexion)
+    BEGIN
+        RAISERROR('El TipoConexion con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    UPDATE TipoConexion
+    SET estado = @nuevoEstado
+    WHERE id_tipoConexion = @idTipoConexion;
+
+END
+GO
+
+-- Insert empeleado (Daniel)
+
+CREATE PROCEDURE [dbo].[CrearEmpleado]
+    @cedula VARCHAR(20),
+    @nombre VARCHAR(50),
+    @ape1 VARCHAR(20),
+    @ape2 VARCHAR(20) = NULL,
+    @telefono VARCHAR(20) = NULL,
+    @correo_electronico VARCHAR(100) = NULL,
+    @contrasena VARCHAR(255),
+    @rol VARCHAR(20)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Verificar cédula única
+    IF EXISTS (SELECT 1 FROM Empleado WHERE cedula = @cedula)
+    BEGIN
+        RAISERROR('El empleado con cédula ya existe', 16, 1);
+        RETURN;
+    END
+
+    -- Verificar correo único
+    IF @correo_electronico IS NOT NULL AND EXISTS (SELECT 1 FROM Empleado WHERE correo_electronico = @correo_electronico)
+    BEGIN
+        RAISERROR('El correo electrónico ya está en uso', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar empleado
+    INSERT INTO Empleado (cedula, nombre, ape1, ape2, telefono, correo_electronico, contrasena, rol)
+    VALUES (@cedula, @nombre, @ape1, @ape2, @telefono, @correo_electronico, @contrasena, @rol);
+END
+GO
+
+
 -- Auditoría abonado
 CREATE OR ALTER TRIGGER dbo.trg_auditoriaAbonado
 ON dbo.Abonado
