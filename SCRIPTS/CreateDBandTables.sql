@@ -688,6 +688,129 @@ BEGIN
 END
 GO
 
+-- sp insert conexion (Daniel)
+
+USE ASADA_SC;
+GO
+
+IF OBJECT_ID('dbo.sp_InsertarConexion', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.sp_InsertarConexion;
+GO
+
+CREATE PROCEDURE sp_InsertarConexion
+    @nis VARCHAR(10),
+    @direccion_servicio VARCHAR(255),
+    @fecha_ini DATETIME,
+    @fecha_fin DATETIME = NULL,
+    @id_abonado INT,
+    @id_tipoConexion INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones previas
+    IF EXISTS (SELECT 1 FROM Conexion WHERE nis = @nis)
+    BEGIN
+        RAISERROR('Ya existe una conexión con ese NIS', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Abonado WHERE id_abonado = @id_abonado)
+    BEGIN
+        RAISERROR('El abonado con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM TipoConexion WHERE id_tipoConexion = @id_tipoConexion)
+    BEGIN
+        RAISERROR('El tipo de conexión con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    BEGIN TRY
+        INSERT INTO Conexion (
+            nis, direccion_servicio, fecha_ini, fecha_fin, id_abonado, id_tipoConexion
+        )
+        VALUES (
+            @nis, @direccion_servicio, @fecha_ini, @fecha_fin, @id_abonado, @id_tipoConexion
+        );
+
+        SELECT SCOPE_IDENTITY() AS idConexionCreada;
+
+    END TRY
+    BEGIN CATCH
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH
+END;
+GO
+
+-- sp update para conexion (Daniel)
+
+IF OBJECT_ID('dbo.sp_ActualizarConexionParcial', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.sp_ActualizarConexionParcial;
+GO
+
+CREATE PROCEDURE dbo.sp_ActualizarConexionParcial
+    @idConexion INT,
+    @nis VARCHAR(10) = NULL,
+    @direccion_servicio VARCHAR(255) = NULL,
+    @fecha_ini DATETIME = NULL,
+    @fecha_fin DATETIME = NULL,
+    @id_abonado INT = NULL,
+    @id_tipoConexion INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validación de existencia
+    IF NOT EXISTS (SELECT 1 FROM Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    -- Validaciones para los IDs y NIS si se proporcionan
+    IF @nis IS NOT NULL AND EXISTS (SELECT 1 FROM Conexion WHERE nis = @nis AND id_conexion <> @idConexion)
+    BEGIN
+        RAISERROR('Ya existe otra conexión con ese NIS', 16, 1);
+        RETURN;
+    END
+
+    IF @id_abonado IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Abonado WHERE id_abonado = @id_abonado)
+    BEGIN
+        RAISERROR('El abonado con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    IF @id_tipoConexion IS NOT NULL AND NOT EXISTS (SELECT 1 FROM TipoConexion WHERE id_tipoConexion = @id_tipoConexion)
+    BEGIN
+        RAISERROR('El tipo de conexión con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    BEGIN TRY
+        UPDATE Conexion
+        SET
+            nis = COALESCE(@nis, nis),
+            direccion_servicio = COALESCE(@direccion_servicio, direccion_servicio),
+            fecha_ini = COALESCE(@fecha_ini, fecha_ini),
+            fecha_fin = COALESCE(@fecha_fin, fecha_fin),
+            id_abonado = COALESCE(@id_abonado, id_abonado),
+            id_tipoConexion = COALESCE(@id_tipoConexion, id_tipoConexion)
+        WHERE id_conexion = @idConexion;
+
+        SELECT 'Conexión actualizada correctamente' AS message;
+
+    END TRY
+    BEGIN CATCH
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH
+END;
+GO
+
+
 -- Insert empeleado (Daniel)
 
 CREATE PROCEDURE [dbo].[CrearEmpleado]
@@ -721,6 +844,50 @@ BEGIN
     INSERT INTO Empleado (cedula, nombre, ape1, ape2, telefono, correo_electronico, contrasena, rol)
     VALUES (@cedula, @nombre, @ape1, @ape2, @telefono, @correo_electronico, @contrasena, @rol);
 END
+GO
+
+-- Buscar Abonado por correo, telefono, cedula y nombre (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_BuscarAbonadoMasParecido
+  @criterio NVARCHAR(100)
+AS
+BEGIN
+  SET NOCOUNT ON;
+
+  DECLARE @criterioNormalizado NVARCHAR(100);
+  SET @criterioNormalizado = LTRIM(RTRIM(LOWER(@criterio)));
+
+  ;WITH Candidatos AS (
+    SELECT 
+      a.id_abonado AS idAbonado,
+	  a.cedula,
+	  a.telefono,
+	  a.correo_electronico,
+      -- 🧱 Nombre completo
+      CONCAT(a.nombre, ' ', a.ape1, 
+             CASE WHEN a.ape2 IS NOT NULL AND a.ape2 <> '' THEN ' ' + a.ape2 ELSE '' END) AS nombreCompleto,
+
+      -- 🔢 Puntuación de similitud
+      (
+        CASE WHEN a.nombre COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 5 ELSE 0 END +
+        CASE WHEN a.ape1 COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 4 ELSE 0 END +
+        CASE WHEN a.ape2 COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 3 ELSE 0 END +
+        CASE WHEN a.correo_electronico COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 4 ELSE 0 END +
+        CASE WHEN a.telefono COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 2 ELSE 0 END +
+        CASE WHEN a.cedula COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 3 ELSE 0 END
+      ) AS Puntuacion
+    FROM dbo.Abonado a
+  )
+  SELECT TOP 1
+    idAbonado,
+	cedula,
+    nombreCompleto,
+	telefono,
+	correo_electronico
+  FROM Candidatos
+  WHERE Puntuacion > 0
+  ORDER BY Puntuacion DESC;
+END;
 GO
 
 
