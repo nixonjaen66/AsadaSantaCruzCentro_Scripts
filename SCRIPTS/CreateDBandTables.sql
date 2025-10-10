@@ -890,6 +890,645 @@ BEGIN
 END;
 GO
 
+-- Sp insertar periodo (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_InsertarPeriodo
+    @anio INT,
+    @mes INT,
+    @fechaCorte DATETIME = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones
+    IF @anio IS NULL OR @mes IS NULL
+    BEGIN
+        RAISERROR('Debe proporcionar año y mes del periodo.', 16, 1);
+        RETURN;
+    END
+
+    IF @mes < 1 OR @mes > 12
+    BEGIN
+        RAISERROR('El mes debe estar entre 1 y 12.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar duplicado
+    IF EXISTS (
+        SELECT 1
+        FROM dbo.Periodo
+        WHERE anio = @anio AND mes = @mes
+    )
+    BEGIN
+        RAISERROR('Ya existe un periodo con el mismo año y mes.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar el periodo
+    INSERT INTO dbo.Periodo (anio, mes, fecha_corte)
+    VALUES (@anio, @mes, @fechaCorte);
+
+    -- Devolver el id generado
+    SELECT SCOPE_IDENTITY() AS idPeriodo;
+END;
+GO
+
+-- Buscar periodo (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_BuscarPeriodo
+    @anio INT = NULL,
+    @mes INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar que al menos un parámetro venga
+    IF @anio IS NULL AND @mes IS NULL
+    BEGIN
+        RAISERROR('Debe proporcionar al menos el año o el mes para la búsqueda.', 16, 1);
+        RETURN;
+    END
+
+    -- Buscar el periodo
+    SELECT TOP 1
+        id_periodo AS idPeriodo,
+        anio,
+        mes,
+        CONVERT(VARCHAR(10), fecha_corte, 103) AS fechaCorte -- Formato dd/mm/yyyy
+    FROM dbo.Periodo
+    WHERE 
+        (@anio IS NULL OR anio = @anio) AND
+        (@mes IS NULL OR mes = @mes)
+    ORDER BY anio DESC, mes DESC;  -- Devuelve el más reciente si hay varios
+END;
+GO
+
+-- Sp insertar medidor (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_InsertarMedidor
+    @serial VARCHAR(10)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validación del serial
+    IF @serial IS NULL OR LEN(@serial) = 0
+    BEGIN
+        RAISERROR('Debe proporcionar un serial válido.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar duplicado
+    IF EXISTS (
+        SELECT 1
+        FROM dbo.Medidor
+        WHERE serial = @serial
+    )
+    BEGIN
+        RAISERROR('Ya existe un medidor con el mismo serial.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar el medidor con estado = 1 (activo)
+    INSERT INTO dbo.Medidor (serial, estado)
+    VALUES (@serial, 0);
+
+    -- Devolver el id generado
+    SELECT SCOPE_IDENTITY() AS idMedidor;
+END;
+GO
+
+-- Listar medidores sp (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_ListarMedidores
+    @numeroInicial INT = 0, -- desde qué registro empezar
+    @limite INT = 10        -- cuántos registros traer
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de medidores
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM dbo.Medidor;
+
+    -- Devolver los registros paginados
+    SELECT 
+        id_medidor AS idMedidor,
+        serial,
+        estado,
+        @total AS total
+    FROM dbo.Medidor
+    ORDER BY id_medidor
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp buscar medidor (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_BuscarMedidor
+    @serialBuscado VARCHAR(10)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validación
+    IF @serialBuscado IS NULL OR LEN(@serialBuscado) = 0
+    BEGIN
+        RAISERROR('Debe proporcionar un serial para la búsqueda.', 16, 1);
+        RETURN;
+    END
+
+    -- Buscar medidor más parecido
+    SELECT TOP 1
+        id_medidor AS idMedidor,
+        serial,
+        estado
+    FROM dbo.Medidor
+    WHERE serial LIKE '%' + @serialBuscado + '%'
+    ORDER BY 
+        -- Ordena por cercanía: empieza con el valor buscado primero
+        CASE 
+            WHEN serial = @serialBuscado THEN 0
+            WHEN serial LIKE @serialBuscado + '%' THEN 1
+            ELSE 2
+        END,
+        id_medidor; -- desempate por id
+END;
+GO
+
+-- Insertar tarifa (Daniel)
+
+IF OBJECT_ID('dbo.sp_InsertarTarifa', 'P') IS NOT NULL
+    DROP PROCEDURE dbo.sp_InsertarTarifa;
+GO
+
+CREATE PROCEDURE sp_InsertarTarifa
+    @tipoTarifa VARCHAR(30),
+    @cargoFijo DECIMAL(12,2),
+    @fechaIni DATETIME,
+    @fechaFin DATETIME = NULL,
+    @idTipoConexion INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validación tipo de conexión
+    IF NOT EXISTS (SELECT 1 FROM TipoConexion WHERE id_tipoConexion = @idTipoConexion)
+    BEGIN
+        RAISERROR('El tipo de conexión con ese ID no existe', 16, 1);
+        RETURN;
+    END
+
+    -- Validar solapamiento de tarifas
+    IF EXISTS (
+        SELECT 1 
+        FROM Tarifa 
+        WHERE tipo_tarifa = @tipoTarifa 
+          AND id_tipoConexion = @idTipoConexion 
+          AND fecha_ini <= ISNULL(@fechaFin, GETDATE())
+          AND (fecha_fin IS NULL OR fecha_fin >= @fechaIni)
+    )
+    BEGIN
+        RAISERROR('Ya existe una tarifa para este tipo de conexión y fechas que se solapan', 16, 1);
+        RETURN;
+    END
+
+    BEGIN TRY
+        -- Insertar tarifa
+        INSERT INTO Tarifa (tipo_tarifa, cargo_fijo, fecha_ini, fecha_fin, id_tipoConexion)
+        VALUES (@tipoTarifa, @cargoFijo, @fechaIni, @fechaFin, @idTipoConexion);
+
+        -- Devolver el id generado
+        SELECT SCOPE_IDENTITY() AS idTarifaCreada;
+    END TRY
+    BEGIN CATCH
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH
+END;
+GO
+
+
+-- sp Buscar tarifa (Daniel)
+
+CREATE OR ALTER PROCEDURE  sp_BuscarTarifa
+    @idTipoConexion INT = NULL,
+    @nombreTipoTarifa NVARCHAR(50) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT 
+        t.id_tarifa,
+        t.tipo_tarifa
+      
+    FROM Tarifa t
+    WHERE 
+        (@idTipoConexion IS NULL OR t.id_tipoConexion = @idTipoConexion)
+        AND
+        (@nombreTipoTarifa IS NULL OR t.tipo_tarifa LIKE '%' + @nombreTipoTarifa + '%')
+    ORDER BY 
+        -- opcional: poner primero los más parecidos si quieres
+        CASE 
+            WHEN @nombreTipoTarifa IS NOT NULL THEN 
+                LEN(t.tipo_tarifa) - LEN(REPLACE(t.tipo_tarifa, @nombreTipoTarifa, ''))
+            ELSE 0
+        END DESC
+END
+
+-- Insert tramo tarifa (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_InsertarTarifaTramo
+    @idTarifa INT,
+    @desdeM3 INT = NULL,
+    @hastaM3 INT = NULL,
+    @precioM3 DECIMAL(10,2)
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones
+    IF @precioM3 <= 0
+    BEGIN
+        RAISERROR('El precio por m3 debe ser mayor a 0.', 16, 1);
+        RETURN;
+    END
+
+    IF @idTarifa IS NULL
+    BEGIN
+        RAISERROR('Debe proporcionar un idTarifa válido.', 16, 1);
+        RETURN;
+    END
+
+    IF @desdeM3 IS NOT NULL AND @hastaM3 IS NOT NULL AND @desdeM3 > @hastaM3
+    BEGIN
+        RAISERROR('desdeM3 no puede ser mayor que hastaM3.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar que exista la tarifa
+    IF NOT EXISTS (SELECT 1 FROM dbo.Tarifa WHERE id_tarifa = @idTarifa)
+    BEGIN
+        RAISERROR('No existe una tarifa con el id proporcionado.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar el tramo
+    INSERT INTO dbo.TarifaTramo (id_tarifa, desde_m3, hasta_m3, precio_m3)
+    VALUES (@idTarifa, @desdeM3, @hastaM3, @precioM3);
+
+    -- Devolver el id generado
+    SELECT SCOPE_IDENTITY() AS idTramo;
+END;
+GO
+
+
+-- sp insertar medidor historico (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_InsertarMedidorHistorico
+    @idMedidor INT,
+    @idConexion INT,
+    @fechaInstalacion DATETIME,
+    @fechaRetiro DATETIME = NULL,
+    @lecturaInicial DECIMAL(12,2),
+    @lecturaFinal DECIMAL(12,2) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia del medidor
+    IF NOT EXISTS (SELECT 1 FROM dbo.Medidor WHERE id_medidor = @idMedidor)
+    BEGIN
+        RAISERROR('El medidor especificado no existe.', 16, 1);
+        RETURN;
+    END;
+
+    -- Validar existencia de la conexión
+    IF NOT EXISTS (SELECT 1 FROM dbo.Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión especificada no existe.', 16, 1);
+        RETURN;
+    END;
+
+    -- Validar fechas
+    IF @fechaInstalacion IS NULL
+    BEGIN
+        RAISERROR('Debe especificar una fecha de instalación.', 16, 1);
+        RETURN;
+    END;
+
+    IF @fechaRetiro IS NOT NULL AND @fechaRetiro < @fechaInstalacion
+    BEGIN
+        RAISERROR('La fecha de retiro no puede ser anterior a la instalación.', 16, 1);
+        RETURN;
+    END;
+
+    -- Validar lecturas
+    IF @lecturaInicial < 0
+    BEGIN
+        RAISERROR('La lectura inicial no puede ser negativa.', 16, 1);
+        RETURN;
+    END;
+
+    IF @lecturaFinal IS NOT NULL AND @lecturaFinal < @lecturaInicial
+    BEGIN
+        RAISERROR('La lectura final no puede ser menor que la inicial.', 16, 1);
+        RETURN;
+    END;
+
+    -- Validar que el medidor no esté ya asignado sin retiro
+    IF EXISTS (
+        SELECT 1 FROM dbo.MedidorHistorico 
+        WHERE id_medidor = @idMedidor AND fecha_retiro IS NULL
+    )
+    BEGIN
+        RAISERROR('El medidor ya está asignado y no ha sido retirado.', 16, 1);
+        RETURN;
+    END;
+
+    -- Insertar registro en MedidorHistorico
+    INSERT INTO dbo.MedidorHistorico (
+        id_medidor, id_conexion, fecha_instalacion, fecha_retiro, lectura_inicial, lectura_final
+    )
+    VALUES (
+        @idMedidor, @idConexion, @fechaInstalacion, @fechaRetiro, @lecturaInicial, @lecturaFinal
+    );
+
+    -- Cambiar el estado del medidor a "instalado" (1)
+    UPDATE dbo.Medidor
+    SET estado = 1
+    WHERE id_medidor = @idMedidor;
+
+    -- Retornar ID generado
+    SELECT SCOPE_IDENTITY() AS idMedidorHistorico;
+END;
+GO
+
+-- sp insertar lectura (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_InsertarLecturaConFactura
+    @idMedidor INT,
+    @idPeriodo INT,
+    @lecturaAnterior DECIMAL(12,2),
+    @lecturaActual DECIMAL(12,2),
+    @fechaLectura DATETIME,
+    @idEmpleado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -------------------------------
+    -- 1️⃣ Validaciones básicas
+    -------------------------------
+
+    -- Medidor existente
+    IF NOT EXISTS (SELECT 1 FROM dbo.Medidor WHERE id_medidor = @idMedidor)
+    BEGIN
+        RAISERROR('El medidor especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Periodo existente
+    IF NOT EXISTS (SELECT 1 FROM dbo.Periodo WHERE id_periodo = @idPeriodo)
+    BEGIN
+        RAISERROR('El periodo especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Empleado existente
+    IF NOT EXISTS (SELECT 1 FROM dbo.Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Lecturas válidas
+    IF @lecturaAnterior < 0 OR @lecturaActual < 0
+    BEGIN
+        RAISERROR('Las lecturas no pueden ser negativas.', 16, 1);
+        RETURN;
+    END
+
+    IF @lecturaActual < @lecturaAnterior
+    BEGIN
+        RAISERROR('La lectura actual no puede ser menor que la anterior.', 16, 1);
+        RETURN;
+    END
+
+
+    -------------------------------
+    -- 2️⃣ Insertar lectura
+    -------------------------------
+    INSERT INTO dbo.Lectura (id_medidor, id_periodo, lectura_anterior, lectura_actual, fecha_lectura, id_empleado)
+    VALUES (@idMedidor, @idPeriodo, @lecturaAnterior, @lecturaActual, @fechaLectura, @idEmpleado);
+
+    DECLARE @idLectura INT = SCOPE_IDENTITY();
+    DECLARE @idConexion INT;
+    DECLARE @idAbonado INT;
+    DECLARE @idTipoConexion INT;
+    DECLARE @idTarifa INT;
+    DECLARE @fechaVencimiento DATETIME;
+
+    -------------------------------
+    -- 3️⃣ Obtener datos de conexión y abonado
+    -------------------------------
+    SELECT TOP 1
+        @idConexion = mh.id_conexion,
+        @idTipoConexion = c.id_tipoConexion,
+        @idAbonado = c.id_abonado
+    FROM dbo.MedidorHistorico mh
+    INNER JOIN dbo.Conexion c ON c.id_conexion = mh.id_conexion
+    WHERE mh.id_medidor = @idMedidor
+      AND mh.fecha_retiro IS NULL;
+
+    IF @idConexion IS NULL
+    BEGIN
+        RAISERROR('No se encontró una conexión activa para este medidor.', 16, 1);
+        RETURN;
+    END
+
+    -------------------------------
+    -- 4️⃣ Obtener tarifa activa
+    -------------------------------
+    SELECT TOP 1 @idTarifa = t.id_tarifa
+    FROM dbo.Tarifa t
+    WHERE t.id_tipoConexion = @idTipoConexion
+      AND t.fecha_ini <= @fechaLectura
+      AND (t.fecha_fin IS NULL OR t.fecha_fin >= @fechaLectura)
+    ORDER BY t.fecha_ini DESC;
+
+    IF @idTarifa IS NULL
+    BEGIN
+        RAISERROR('No se encontró una tarifa activa para este tipo de conexión.', 16, 1);
+        RETURN;
+    END
+
+    -------------------------------
+    -- 5️⃣ Obtener fecha de vencimiento del periodo
+    -------------------------------
+    SELECT @fechaVencimiento = fecha_corte
+    FROM dbo.Periodo
+    WHERE id_periodo = @idPeriodo;
+
+    -------------------------------
+    -- 6️⃣ Insertar factura y relacionar
+    -------------------------------
+    INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
+    VALUES (@fechaLectura, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
+
+    DECLARE @idFactura INT = SCOPE_IDENTITY();
+
+    INSERT INTO dbo.Factura_Lectura (id_factura, id_lectura)
+    VALUES (@idFactura, @idLectura);
+END;
+GO
+
+-- generar factura (Daniel) 
+
+CREATE OR ALTER PROCEDURE sp_GenerarFacturaPeriodoPorTramo
+    @idMedidor INT,
+    @idPeriodo INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @idConexion INT;
+    DECLARE @idAbonado INT;
+    DECLARE @idTipoConexion INT;
+    DECLARE @idTarifa INT;
+    DECLARE @fechaVencimiento DATETIME;
+    DECLARE @fechaEmision DATETIME = GETDATE();
+    DECLARE @cargoFijo DECIMAL(12,2) = 0;
+    DECLARE @totalFactura DECIMAL(12,2) = 0;
+    DECLARE @lecturasExistentes INT;
+
+    -- Validaciones básicas
+    IF NOT EXISTS (SELECT 1 FROM dbo.Medidor WHERE id_medidor = @idMedidor)
+    BEGIN
+        RAISERROR('El medidor especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM dbo.Periodo WHERE id_periodo = @idPeriodo)
+    BEGIN
+        RAISERROR('El periodo especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Verificar si hay lecturas en el periodo
+   SELECT @lecturasExistentes = COUNT(*)
+	FROM dbo.Lectura
+	WHERE id_medidor = @idMedidor
+	  AND id_periodo = @idPeriodo;
+
+	IF @lecturasExistentes = 0
+	BEGIN
+		RAISERROR('No hay lecturas registradas para este medidor en el periodo especificado.', 16, 1);
+		RETURN;
+	END
+
+	
+
+    -- Obtener conexión, abonado y tipo de conexión
+    SELECT TOP 1
+        @idConexion = mh.id_conexion,
+        @idTipoConexion = c.id_tipoConexion,
+        @idAbonado = c.id_abonado
+    FROM dbo.MedidorHistorico mh
+    INNER JOIN dbo.Conexion c ON c.id_conexion = mh.id_conexion
+    WHERE mh.id_medidor = @idMedidor
+      AND mh.fecha_retiro IS NULL;
+
+    IF @idConexion IS NULL
+    BEGIN
+        RAISERROR('No se encontró una conexión activa para este medidor.', 16, 1);
+        RETURN;
+    END
+
+    -- Obtener tarifa activa
+    SELECT TOP 1
+        @idTarifa = t.id_tarifa,
+        @cargoFijo = t.cargo_fijo
+    FROM dbo.Tarifa t
+    WHERE t.id_tipoConexion = @idTipoConexion
+      AND t.fecha_ini <= @fechaEmision
+      AND (t.fecha_fin IS NULL OR t.fecha_fin >= @fechaEmision)
+    ORDER BY t.fecha_ini DESC;
+
+    IF @idTarifa IS NULL
+    BEGIN
+        RAISERROR('No se encontró una tarifa activa para este tipo de conexión.', 16, 1);
+        RETURN;
+    END
+
+    -- Fecha de corte del periodo
+    SELECT @fechaVencimiento = fecha_corte
+    FROM dbo.Periodo
+    WHERE id_periodo = @idPeriodo;
+
+    -- Calcular costo por lectura y tramo
+    ;WITH LecturaTramos AS (
+        SELECT
+            l.id_lectura,
+            l.lectura_anterior,
+            l.lectura_actual,
+            t.id_tramo,
+            t.desde_m3,
+            t.hasta_m3,
+            t.precio_m3,
+            CASE
+                WHEN t.hasta_m3 IS NULL THEN
+                    CASE 
+                        WHEN l.lectura_actual - l.lectura_anterior >= ISNULL(t.desde_m3,0)
+                        THEN (l.lectura_actual - l.lectura_anterior - ISNULL(t.desde_m3,0) + 1) * t.precio_m3
+                        ELSE 0
+                    END
+                ELSE
+                    CASE 
+                        WHEN l.lectura_actual - l.lectura_anterior >= t.desde_m3
+                        THEN ((CASE 
+                                WHEN l.lectura_actual - l.lectura_anterior > t.hasta_m3 
+                                THEN t.hasta_m3 
+                                ELSE l.lectura_actual - l.lectura_anterior
+                              END) - t.desde_m3 + 1) * t.precio_m3
+                        ELSE 0
+                    END
+            END AS costoTramo
+        FROM dbo.Lectura l
+        INNER JOIN dbo.TarifaTramo t ON t.id_tarifa = @idTarifa
+        WHERE l.id_medidor = @idMedidor
+          AND l.id_periodo = @idPeriodo
+    )
+    SELECT @totalFactura = SUM(costoTramo)
+    FROM LecturaTramos;
+
+    -- Sumar cargo fijo
+    SET @totalFactura = ISNULL(@totalFactura,0) + @cargoFijo;
+
+    -- Insertar factura
+    INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
+    VALUES (@fechaEmision, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
+
+    DECLARE @idFactura INT = SCOPE_IDENTITY();
+
+    -- Relacionar todas las lecturas del periodo con la factura
+    INSERT INTO dbo.Factura_Lectura (id_factura, id_lectura)
+    SELECT @idFactura, id_lectura
+    FROM dbo.Lectura
+    WHERE id_medidor = @idMedidor
+      AND id_periodo = @idPeriodo;
+
+    -- Retornar resultado
+    SELECT @idFactura AS idFactura, @totalFactura AS totalAPagar;
+END;
+GO
+
+
 
 -- Auditoría abonado
 CREATE OR ALTER TRIGGER dbo.trg_auditoriaAbonado
