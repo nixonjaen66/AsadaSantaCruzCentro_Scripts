@@ -1528,6 +1528,83 @@ BEGIN
 END;
 GO
 
+-- sp listar lecturas con filtros (Daniel)
+
+CREATE OR ALTER PROCEDURE sp_BuscarLecturasPaginado
+    @idPeriodo INT = NULL,
+    @idEmpleado INT = NULL,
+    @idMedidor INT = NULL,
+    @busqueda NVARCHAR(100) = NULL,
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Total de registros en la tabla
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM dbo.Lectura;
+
+    -- Total que coincide con filtros
+    DECLARE @encontrados INT;
+    SELECT @encontrados = COUNT(*)
+    FROM dbo.Lectura L
+    WHERE
+        (@idPeriodo IS NULL OR L.id_periodo = @idPeriodo)
+        AND (@idEmpleado IS NULL OR L.id_empleado = @idEmpleado)
+        AND (@idMedidor IS NULL OR L.id_medidor = @idMedidor)
+        AND (
+            @busqueda IS NULL
+            OR EXISTS (
+                SELECT 1 FROM dbo.Periodo P
+                WHERE P.id_periodo = L.id_periodo
+                  AND REPLACE(LOWER(CONCAT(P.mes,'/',P.anio)),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+            )
+            OR EXISTS (
+                SELECT 1 FROM dbo.Empleado E
+                WHERE E.id_empleado = L.id_empleado
+                  AND REPLACE(LOWER(CONCAT(E.nombre,' ',E.ape1,' ',ISNULL(E.ape2,''))),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+            )
+            OR EXISTS (
+                SELECT 1 FROM dbo.Medidor M
+                WHERE M.id_medidor = L.id_medidor
+                  AND REPLACE(LOWER(M.serial),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+            )
+        );
+
+    -- Registros paginados
+    SELECT 
+        L.id_lectura AS idLectura,
+        L.lectura_anterior AS lecturaAnterior,
+        L.lectura_actual AS lecturaActual,
+        L.fecha_lectura AS fechaLectura,
+        L.id_periodo AS idPeriodo,
+        CONCAT(P.mes,'/',P.anio) AS nombrePeriodo,
+        L.id_empleado AS idEmpleado,
+        CONCAT(E.nombre,' ',E.ape1,' ',ISNULL(E.ape2,'')) AS nombreEmpleado,
+        L.id_medidor AS idMedidor,
+        M.serial AS serialMedidor,
+        @total AS total,
+        @encontrados AS encontrados
+    FROM dbo.Lectura L
+    INNER JOIN dbo.Periodo P ON L.id_periodo = P.id_periodo
+    INNER JOIN dbo.Empleado E ON L.id_empleado = E.id_empleado
+    INNER JOIN dbo.Medidor M ON L.id_medidor = M.id_medidor
+    WHERE
+        (@idPeriodo IS NULL OR L.id_periodo = @idPeriodo)
+        AND (@idEmpleado IS NULL OR L.id_empleado = @idEmpleado)
+        AND (@idMedidor IS NULL OR L.id_medidor = @idMedidor)
+        AND (
+            @busqueda IS NULL
+            OR REPLACE(LOWER(CONCAT(P.mes,'/',P.anio)),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+            OR REPLACE(LOWER(CONCAT(E.nombre,' ',E.ape1,' ',ISNULL(E.ape2,''))),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+            OR REPLACE(LOWER(M.serial),' ','') LIKE '%' + REPLACE(LOWER(@busqueda),' ','') + '%'
+        )
+    ORDER BY L.fecha_lectura DESC
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
 
 
 -- Auditoría abonado
