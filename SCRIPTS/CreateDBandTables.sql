@@ -1739,3 +1739,250 @@ HAVING
     SUM(ISNULL(p.recargo_mora, 0)) > 0;
 GO
 
+--SP Mantenimientos --David
+
+-- sp_InsertarMantenimiento
+CREATE OR ALTER PROCEDURE sp_InsertarMantenimiento --Quitar el ALTER si no sirve 
+    @fechaMantenimiento DATETIME,
+    @ubicacion VARCHAR(255) = NULL,
+    @idConexion INT,
+    @idEmpleado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones
+    IF @fechaMantenimiento IS NULL
+    BEGIN
+        RAISERROR('Debe proporcionar una fecha de mantenimiento.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión especificada no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar mantenimiento
+    INSERT INTO Mantenimientos (fecha_mantenimiento, ubicacion, estado, id_conexion, id_empleado)
+    VALUES (@fechaMantenimiento, @ubicacion, 1, @idConexion, @idEmpleado);
+
+    -- Retornar ID generado
+    SELECT SCOPE_IDENTITY() AS idMantenimiento;
+END;
+GO
+
+-- sp_ListarMantenimientos
+CREATE OR ALTER PROCEDURE sp_ListarMantenimientos
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de mantenimientos
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Mantenimientos;
+
+    -- Devolver los registros paginados
+    SELECT 
+        m.id_mantenimiento AS idMantenimiento,
+        m.fecha_mantenimiento AS fechaMantenimiento,
+        m.ubicacion,
+        m.estado,
+        c.id_conexion AS idConexion,
+        c.nis,
+        e.id_empleado AS idEmpleado,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado,
+        @total AS total
+    FROM Mantenimientos m
+    LEFT JOIN Conexion c ON c.id_conexion = m.id_conexion
+    LEFT JOIN Empleado e ON e.id_empleado = m.id_empleado
+    ORDER BY m.fecha_mantenimiento DESC
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp_BuscarMantenimientos
+CREATE OR ALTER PROCEDURE sp_BuscarMantenimientos
+    @idConexion INT = NULL,
+    @idEmpleado INT = NULL,
+    @fechaDesde DATETIME = NULL,
+    @fechaHasta DATETIME = NULL,
+    @busqueda VARCHAR(100) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT 
+        m.id_mantenimiento AS idMantenimiento,
+        m.fecha_mantenimiento AS fechaMantenimiento,
+        m.ubicacion,
+        m.estado,
+        c.nis,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado
+    FROM Mantenimientos m
+    LEFT JOIN Conexion c ON c.id_conexion = m.id_conexion
+    LEFT JOIN Empleado e ON e.id_empleado = m.id_empleado
+    WHERE 
+        (@idConexion IS NULL OR m.id_conexion = @idConexion)
+        AND (@idEmpleado IS NULL OR m.id_empleado = @idEmpleado)
+        AND (@fechaDesde IS NULL OR m.fecha_mantenimiento >= @fechaDesde)
+        AND (@fechaHasta IS NULL OR m.fecha_mantenimiento <= @fechaHasta)
+        AND (@busqueda IS NULL OR 
+             LOWER(ISNULL(m.ubicacion,'')) LIKE '%' + LOWER(@busqueda) + '%' OR
+             LOWER(ISNULL(c.nis,'')) LIKE '%' + LOWER(@busqueda) + '%')
+    ORDER BY m.fecha_mantenimiento DESC;
+END;
+GO
+
+-- sp_ActualizarMantenimiento
+CREATE OR ALTER PROCEDURE sp_ActualizarMantenimiento
+    @idMantenimiento INT,
+    @fechaMantenimiento DATETIME = NULL,
+    @ubicacion VARCHAR(255) = NULL,
+    @estado BIT = NULL,
+    @idConexion INT = NULL,
+    @idEmpleado INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar conexión si se proporciona
+    IF @idConexion IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión especificada no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar empleado si se proporciona
+    IF @idEmpleado IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Actualizar mantenimiento
+    UPDATE Mantenimientos
+    SET 
+        fecha_mantenimiento = COALESCE(@fechaMantenimiento, fecha_mantenimiento),
+        ubicacion = COALESCE(@ubicacion, ubicacion),
+        estado = COALESCE(@estado, estado),
+        id_conexion = COALESCE(@idConexion, id_conexion),
+        id_empleado = COALESCE(@idEmpleado, id_empleado)
+    WHERE id_mantenimiento = @idMantenimiento;
+
+    SELECT 'Mantenimiento actualizado correctamente' AS message;
+END;
+GO
+
+-- sp_EliminarMantenimiento
+CREATE OR ALTER PROCEDURE sp_EliminarMantenimiento
+    @idMantenimiento INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Eliminar detalles primero (cascada)
+    DELETE FROM DetalleMantenimiento WHERE id_mantenimiento = @idMantenimiento;
+
+    -- Eliminar mantenimiento
+    DELETE FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento;
+
+    SELECT 'Mantenimiento eliminado correctamente' AS message;
+END;
+GO
+
+-- sp_InsertarDetalleMantenimiento
+CREATE OR ALTER PROCEDURE sp_InsertarDetalleMantenimiento
+    @idMantenimiento INT,
+    @descripcionTrabajo VARCHAR(255),
+    @idEmpleado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones
+    IF @descripcionTrabajo IS NULL OR LEN(@descripcionTrabajo) = 0
+    BEGIN
+        RAISERROR('Debe proporcionar una descripción del trabajo.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar detalle
+    INSERT INTO DetalleMantenimiento (id_mantenimiento, descripcion_trabajo, id_empleado)
+    VALUES (@idMantenimiento, @descripcionTrabajo, @idEmpleado);
+
+    -- Retornar ID generado
+    SELECT SCOPE_IDENTITY() AS idDetalle;
+END;
+GO
+
+-- sp_ObtenerDetallesMantenimiento
+CREATE OR ALTER PROCEDURE sp_ObtenerDetallesMantenimiento
+    @idMantenimiento INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia del mantenimiento
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Obtener detalles
+    SELECT 
+        d.id_detalle AS idDetalle,
+        d.descripcion_trabajo AS descripcionTrabajo,
+        e.id_empleado AS idEmpleado,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado
+    FROM DetalleMantenimiento d
+    INNER JOIN Empleado e ON e.id_empleado = d.id_empleado
+    WHERE d.id_mantenimiento = @idMantenimiento
+    ORDER BY d.id_detalle DESC;
+END;
+GO
+
