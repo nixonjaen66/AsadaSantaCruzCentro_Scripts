@@ -470,6 +470,10 @@ CREATE TABLE Audit_Empleado (
 ) ON Auditorias
 GO
 
+-----------------------------------------
+	--SPs, TRGs, VWs
+-----------------------------------------
+	
 CREATE OR ALTER PROCEDURE dbo.sp_actualizarAbonado
   @id_abonado INT,
   @direccion  VARCHAR(255),
@@ -1335,7 +1339,7 @@ BEGIN
     DECLARE @fechaVencimiento DATETIME;
 
     -------------------------------
-    -- 3️⃣ Obtener datos de conexión y abonado
+    -- Obtener datos de conexión y abonado
     -------------------------------
     SELECT TOP 1
         @idConexion = mh.id_conexion,
@@ -1353,7 +1357,7 @@ BEGIN
     END
 
     -------------------------------
-    -- 4️⃣ Obtener tarifa activa
+    -- Obtener tarifa activa
     -------------------------------
     SELECT TOP 1 @idTarifa = t.id_tarifa
     FROM dbo.Tarifa t
@@ -1369,14 +1373,14 @@ BEGIN
     END
 
     -------------------------------
-    -- 5️⃣ Obtener fecha de vencimiento del periodo
+    -- Obtener fecha de vencimiento del periodo
     -------------------------------
     SELECT @fechaVencimiento = fecha_corte
     FROM dbo.Periodo
     WHERE id_periodo = @idPeriodo;
 
     -------------------------------
-    -- 6️⃣ Insertar factura y relacionar
+    -- Insertar factura y relacionar
     -------------------------------
     INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
     VALUES (@fechaLectura, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
@@ -1738,9 +1742,13 @@ GROUP BY
 HAVING 
     SUM(ISNULL(p.recargo_mora, 0)) > 0;
 GO
-
+	
+------------------------------------------------------------------------
+	--------------------------------------------------------------
 --SP Mantenimientos --David
-
+	--------------------------------------------------------------
+------------------------------------------------------------------------
+	
 -- sp_InsertarMantenimiento
 CREATE OR ALTER PROCEDURE sp_InsertarMantenimiento --Quitar el ALTER si no sirve 
     @fechaMantenimiento DATETIME,
