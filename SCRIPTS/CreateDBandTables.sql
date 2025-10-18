@@ -1986,3 +1986,76 @@ BEGIN
 END;
 GO
 
+--SP_Get [Empleados y Conexion] --David
+
+-- sp_ListarEmpleados
+CREATE OR ALTER PROCEDURE sp_ListarEmpleados
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de empleados
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Empleado;
+
+    -- Devolver los registros paginados
+    SELECT 
+        e.id_empleado AS idEmpleado,
+        e.cedula,
+        e.nombre,
+        e.ape1,
+        e.ape2,
+        e.telefono,
+        e.correo_electronico AS correoElectronico,
+        e.rol,
+        @total AS total
+    FROM Empleado e
+    ORDER BY e.id_empleado
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp_ListarConexiones
+CREATE OR ALTER PROCEDURE sp_ListarConexiones
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de conexiones
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Conexion;
+
+    -- Devolver los registros paginados
+    SELECT 
+        c.id_conexion AS idConexion,
+        c.nis,
+        c.direccion_servicio AS direccionServicio,
+        c.fecha_ini AS fechaIni,
+        c.fecha_fin AS fechaFin,
+        a.id_abonado AS idAbonado,
+        a.nombre AS nombreAbonado,
+        a.ape1 AS ape1Abonado,
+        tc.id_tipoConexion AS idTipoConexion,
+        tc.nombre AS nombreTipoConexion,
+        @total AS total
+    FROM Conexion c
+    LEFT JOIN Abonado a ON a.id_abonado = c.id_abonado
+    LEFT JOIN TipoConexion tc ON tc.id_tipoConexion = c.id_tipoConexion
+    ORDER BY c.id_conexion
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
