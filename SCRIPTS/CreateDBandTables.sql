@@ -234,6 +234,13 @@ GO
 EXECUTE sp_help Factura
 GO
 
+CREATE TABLE EstadoFactura(
+    id_estadoFactura TINYINT PRIMARY KEY,
+    descripcion      VARCHAR(20) NOT NULL
+)ON Operativo
+GO
+	
+
 CREATE TABLE Pago(
     id_pago      INT IDENTITY(1,1) NOT NULL,
     id_factura   INT NOT NULL,
@@ -373,6 +380,16 @@ CREATE TABLE Audit_Factura (
 ) ON Auditorias
 GO
 
+	
+CREATE TABLE Audit_EstadoFactura ( --DONOVAN
+  IdAudit            INT IDENTITY(1,1) PRIMARY KEY,
+  NombreTabla        VARCHAR(30) NOT NULL,   --'EstadoFactura'
+  Operacion          VARCHAR(30) NOT NULL,
+  IdEstadoFactura    TINYINT,
+  Descripcion        VARCHAR(20) NOT NULL
+) ON Auditorias
+GO
+	
 
 CREATE TABLE Audit_Pago (
   IdAudit           INT IDENTITY(1,1) PRIMARY KEY,
@@ -2065,5 +2082,40 @@ BEGIN
     ORDER BY c.id_conexion
     OFFSET @numeroInicial ROWS
     FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE sp_AbonadoFactura --DONOVAN
+  @id_abonado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    BEGIN TRY
+        IF EXISTS (
+            SELECT 1
+            FROM Factura f
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1 -- Pendiente
+        )
+        BEGIN
+            SELECT 
+                f.id_factura,
+                f.fecha_emision,
+                f.fecha_vencimiento,
+                ef.descripcion AS estado
+            FROM Factura f
+            INNER JOIN EstadoFactura ef ON f.estadoFactura = ef.id_estadoFactura
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1;
+        END
+        ELSE
+        BEGIN
+            PRINT 'El abonado no tiene facturas pendientes.';
+        END
+    END TRY
+    BEGIN CATCH
+        PRINT 'Error en sp_AbonadoFactura: ' + ERROR_MESSAGE();
+    END CATCH
 END;
 GO
