@@ -234,6 +234,13 @@ GO
 EXECUTE sp_help Factura
 GO
 
+CREATE TABLE EstadoFactura(
+    id_estadoFactura TINYINT PRIMARY KEY,
+    descripcion      VARCHAR(20) NOT NULL
+)ON Operativo
+GO
+	
+
 CREATE TABLE Pago(
     id_pago      INT IDENTITY(1,1) NOT NULL,
     id_factura   INT NOT NULL,
@@ -373,6 +380,16 @@ CREATE TABLE Audit_Factura (
 ) ON Auditorias
 GO
 
+	
+CREATE TABLE Audit_EstadoFactura ( --DONOVAN
+  IdAudit            INT IDENTITY(1,1) PRIMARY KEY,
+  NombreTabla        VARCHAR(30) NOT NULL,   --'EstadoFactura'
+  Operacion          VARCHAR(30) NOT NULL,
+  IdEstadoFactura    TINYINT,
+  Descripcion        VARCHAR(20) NOT NULL
+) ON Auditorias
+GO
+	
 
 CREATE TABLE Audit_Pago (
   IdAudit           INT IDENTITY(1,1) PRIMARY KEY,
@@ -470,6 +487,10 @@ CREATE TABLE Audit_Empleado (
 ) ON Auditorias
 GO
 
+-----------------------------------------
+	--SPs, TRGs, VWs
+-----------------------------------------
+	
 CREATE OR ALTER PROCEDURE dbo.sp_actualizarAbonado
   @id_abonado INT,
   @direccion  VARCHAR(255),
@@ -1335,7 +1356,7 @@ BEGIN
     DECLARE @fechaVencimiento DATETIME;
 
     -------------------------------
-    -- 3️⃣ Obtener datos de conexión y abonado
+    -- Obtener datos de conexión y abonado
     -------------------------------
     SELECT TOP 1
         @idConexion = mh.id_conexion,
@@ -1353,7 +1374,7 @@ BEGIN
     END
 
     -------------------------------
-    -- 4️⃣ Obtener tarifa activa
+    -- Obtener tarifa activa
     -------------------------------
     SELECT TOP 1 @idTarifa = t.id_tarifa
     FROM dbo.Tarifa t
@@ -1369,14 +1390,14 @@ BEGIN
     END
 
     -------------------------------
-    -- 5️⃣ Obtener fecha de vencimiento del periodo
+    -- Obtener fecha de vencimiento del periodo
     -------------------------------
     SELECT @fechaVencimiento = fecha_corte
     FROM dbo.Periodo
     WHERE id_periodo = @idPeriodo;
 
     -------------------------------
-    -- 6️⃣ Insertar factura y relacionar
+    -- Insertar factura y relacionar
     -------------------------------
     INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
     VALUES (@fechaLectura, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
@@ -1738,9 +1759,13 @@ GROUP BY
 HAVING 
     SUM(ISNULL(p.recargo_mora, 0)) > 0;
 GO
-
+	
+------------------------------------------------------------------------
+	--------------------------------------------------------------
 --SP Mantenimientos --David
-
+	--------------------------------------------------------------
+------------------------------------------------------------------------
+	
 -- sp_InsertarMantenimiento
 CREATE OR ALTER PROCEDURE sp_InsertarMantenimiento --Quitar el ALTER si no sirve 
     @fechaMantenimiento DATETIME,
@@ -2082,5 +2107,40 @@ BEGIN
         3 AS id,
         'Empleado' AS value,
         'Empleado' AS nombre;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE sp_AbonadoFactura --DONOVAN
+  @id_abonado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    BEGIN TRY
+        IF EXISTS (
+            SELECT 1
+            FROM Factura f
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1 -- Pendiente
+        )
+        BEGIN
+            SELECT 
+                f.id_factura,
+                f.fecha_emision,
+                f.fecha_vencimiento,
+                ef.descripcion AS estado
+            FROM Factura f
+            INNER JOIN EstadoFactura ef ON f.estadoFactura = ef.id_estadoFactura
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1;
+        END
+        ELSE
+        BEGIN
+            PRINT 'El abonado no tiene facturas pendientes.';
+        END
+    END TRY
+    BEGIN CATCH
+        PRINT 'Error en sp_AbonadoFactura: ' + ERROR_MESSAGE();
+    END CATCH
 END;
 GO
