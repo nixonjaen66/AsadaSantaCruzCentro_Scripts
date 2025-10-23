@@ -2059,3 +2059,28 @@ BEGIN
     FETCH NEXT @limite ROWS ONLY;
 END;
 GO
+
+-- sp_ListarRoles
+USE ASADA_SC;
+GO
+CREATE OR ALTER PROCEDURE sp_ListarRoles
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT 
+        1 AS id,
+        'Administrador' AS value,
+        'Administrador' AS nombre
+    UNION ALL
+    SELECT 
+        2 AS id,
+        'Abonado' AS value,
+        'Abonado' AS nombre
+    UNION ALL
+    SELECT 
+        3 AS id,
+        'Empleado' AS value,
+        'Empleado' AS nombre;
+END;
+GO
