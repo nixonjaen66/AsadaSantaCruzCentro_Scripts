@@ -234,6 +234,13 @@ GO
 EXECUTE sp_help Factura
 GO
 
+CREATE TABLE EstadoFactura(
+    id_estadoFactura TINYINT PRIMARY KEY,
+    descripcion      VARCHAR(20) NOT NULL
+)ON Operativo
+GO
+	
+
 CREATE TABLE Pago(
     id_pago      INT IDENTITY(1,1) NOT NULL,
     id_factura   INT NOT NULL,
@@ -373,6 +380,16 @@ CREATE TABLE Audit_Factura (
 ) ON Auditorias
 GO
 
+	
+CREATE TABLE Audit_EstadoFactura ( --DONOVAN
+  IdAudit            INT IDENTITY(1,1) PRIMARY KEY,
+  NombreTabla        VARCHAR(30) NOT NULL,   --'EstadoFactura'
+  Operacion          VARCHAR(30) NOT NULL,
+  IdEstadoFactura    TINYINT,
+  Descripcion        VARCHAR(20) NOT NULL
+) ON Auditorias
+GO
+	
 
 CREATE TABLE Audit_Pago (
   IdAudit           INT IDENTITY(1,1) PRIMARY KEY,
@@ -470,6 +487,10 @@ CREATE TABLE Audit_Empleado (
 ) ON Auditorias
 GO
 
+-----------------------------------------
+	--SPs, TRGs, VWs
+-----------------------------------------
+	
 CREATE OR ALTER PROCEDURE dbo.sp_actualizarAbonado
   @id_abonado INT,
   @direccion  VARCHAR(255),
@@ -1335,7 +1356,7 @@ BEGIN
     DECLARE @fechaVencimiento DATETIME;
 
     -------------------------------
-    -- 3️⃣ Obtener datos de conexión y abonado
+    -- Obtener datos de conexión y abonado
     -------------------------------
     SELECT TOP 1
         @idConexion = mh.id_conexion,
@@ -1353,7 +1374,7 @@ BEGIN
     END
 
     -------------------------------
-    -- 4️⃣ Obtener tarifa activa
+    -- Obtener tarifa activa
     -------------------------------
     SELECT TOP 1 @idTarifa = t.id_tarifa
     FROM dbo.Tarifa t
@@ -1369,14 +1390,14 @@ BEGIN
     END
 
     -------------------------------
-    -- 5️⃣ Obtener fecha de vencimiento del periodo
+    -- Obtener fecha de vencimiento del periodo
     -------------------------------
     SELECT @fechaVencimiento = fecha_corte
     FROM dbo.Periodo
     WHERE id_periodo = @idPeriodo;
 
     -------------------------------
-    -- 6️⃣ Insertar factura y relacionar
+    -- Insertar factura y relacionar
     -------------------------------
     INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
     VALUES (@fechaLectura, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
@@ -1740,4 +1761,388 @@ GROUP BY
 HAVING 
     SUM(ISNULL(p.recargo_mora, 0)) > 0;
 GO
+	
+------------------------------------------------------------------------
+	--------------------------------------------------------------
+--SP Mantenimientos --David
+	--------------------------------------------------------------
+------------------------------------------------------------------------
+	
+-- sp_InsertarMantenimiento
+CREATE OR ALTER PROCEDURE sp_InsertarMantenimiento --Quitar el ALTER si no sirve 
+    @fechaMantenimiento DATETIME,
+    @ubicacion VARCHAR(255) = NULL,
+    @idConexion INT,
+    @idEmpleado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
 
+    -- Validaciones
+    IF @fechaMantenimiento IS NULL
+    BEGIN
+        RAISERROR('Debe proporcionar una fecha de mantenimiento.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión especificada no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar mantenimiento
+    INSERT INTO Mantenimientos (fecha_mantenimiento, ubicacion, estado, id_conexion, id_empleado)
+    VALUES (@fechaMantenimiento, @ubicacion, 1, @idConexion, @idEmpleado);
+
+    -- Retornar ID generado
+    SELECT SCOPE_IDENTITY() AS idMantenimiento;
+END;
+GO
+
+-- sp_ListarMantenimientos
+CREATE OR ALTER PROCEDURE sp_ListarMantenimientos
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de mantenimientos
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Mantenimientos;
+
+    -- Devolver los registros paginados
+    SELECT 
+        m.id_mantenimiento AS idMantenimiento,
+        m.fecha_mantenimiento AS fechaMantenimiento,
+        m.ubicacion,
+        m.estado,
+        c.id_conexion AS idConexion,
+        c.nis,
+        e.id_empleado AS idEmpleado,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado,
+        @total AS total
+    FROM Mantenimientos m
+    LEFT JOIN Conexion c ON c.id_conexion = m.id_conexion
+    LEFT JOIN Empleado e ON e.id_empleado = m.id_empleado
+    ORDER BY m.fecha_mantenimiento DESC
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp_BuscarMantenimientos
+CREATE OR ALTER PROCEDURE sp_BuscarMantenimientos
+    @idConexion INT = NULL,
+    @idEmpleado INT = NULL,
+    @fechaDesde DATETIME = NULL,
+    @fechaHasta DATETIME = NULL,
+    @busqueda VARCHAR(100) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT 
+        m.id_mantenimiento AS idMantenimiento,
+        m.fecha_mantenimiento AS fechaMantenimiento,
+        m.ubicacion,
+        m.estado,
+        c.nis,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado
+    FROM Mantenimientos m
+    LEFT JOIN Conexion c ON c.id_conexion = m.id_conexion
+    LEFT JOIN Empleado e ON e.id_empleado = m.id_empleado
+    WHERE 
+        (@idConexion IS NULL OR m.id_conexion = @idConexion)
+        AND (@idEmpleado IS NULL OR m.id_empleado = @idEmpleado)
+        AND (@fechaDesde IS NULL OR m.fecha_mantenimiento >= @fechaDesde)
+        AND (@fechaHasta IS NULL OR m.fecha_mantenimiento <= @fechaHasta)
+        AND (@busqueda IS NULL OR 
+             LOWER(ISNULL(m.ubicacion,'')) LIKE '%' + LOWER(@busqueda) + '%' OR
+             LOWER(ISNULL(c.nis,'')) LIKE '%' + LOWER(@busqueda) + '%')
+    ORDER BY m.fecha_mantenimiento DESC;
+END;
+GO
+
+-- sp_ActualizarMantenimiento
+CREATE OR ALTER PROCEDURE sp_ActualizarMantenimiento
+    @idMantenimiento INT,
+    @fechaMantenimiento DATETIME = NULL,
+    @ubicacion VARCHAR(255) = NULL,
+    @estado BIT = NULL,
+    @idConexion INT = NULL,
+    @idEmpleado INT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar conexión si se proporciona
+    IF @idConexion IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Conexion WHERE id_conexion = @idConexion)
+    BEGIN
+        RAISERROR('La conexión especificada no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Validar empleado si se proporciona
+    IF @idEmpleado IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Actualizar mantenimiento
+    UPDATE Mantenimientos
+    SET 
+        fecha_mantenimiento = COALESCE(@fechaMantenimiento, fecha_mantenimiento),
+        ubicacion = COALESCE(@ubicacion, ubicacion),
+        estado = COALESCE(@estado, estado),
+        id_conexion = COALESCE(@idConexion, id_conexion),
+        id_empleado = COALESCE(@idEmpleado, id_empleado)
+    WHERE id_mantenimiento = @idMantenimiento;
+
+    SELECT 'Mantenimiento actualizado correctamente' AS message;
+END;
+GO
+
+-- sp_EliminarMantenimiento
+CREATE OR ALTER PROCEDURE sp_EliminarMantenimiento
+    @idMantenimiento INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Eliminar detalles primero (cascada)
+    DELETE FROM DetalleMantenimiento WHERE id_mantenimiento = @idMantenimiento;
+
+    -- Eliminar mantenimiento
+    DELETE FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento;
+
+    SELECT 'Mantenimiento eliminado correctamente' AS message;
+END;
+GO
+
+-- sp_InsertarDetalleMantenimiento
+CREATE OR ALTER PROCEDURE sp_InsertarDetalleMantenimiento
+    @idMantenimiento INT,
+    @descripcionTrabajo VARCHAR(255),
+    @idEmpleado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validaciones
+    IF @descripcionTrabajo IS NULL OR LEN(@descripcionTrabajo) = 0
+    BEGIN
+        RAISERROR('Debe proporcionar una descripción del trabajo.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    IF NOT EXISTS (SELECT 1 FROM Empleado WHERE id_empleado = @idEmpleado)
+    BEGIN
+        RAISERROR('El empleado especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Insertar detalle
+    INSERT INTO DetalleMantenimiento (id_mantenimiento, descripcion_trabajo, id_empleado)
+    VALUES (@idMantenimiento, @descripcionTrabajo, @idEmpleado);
+
+    -- Retornar ID generado
+    SELECT SCOPE_IDENTITY() AS idDetalle;
+END;
+GO
+
+-- sp_ObtenerDetallesMantenimiento
+CREATE OR ALTER PROCEDURE sp_ObtenerDetallesMantenimiento
+    @idMantenimiento INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar existencia del mantenimiento
+    IF NOT EXISTS (SELECT 1 FROM Mantenimientos WHERE id_mantenimiento = @idMantenimiento)
+    BEGIN
+        RAISERROR('El mantenimiento especificado no existe.', 16, 1);
+        RETURN;
+    END
+
+    -- Obtener detalles
+    SELECT 
+        d.id_detalle AS idDetalle,
+        d.descripcion_trabajo AS descripcionTrabajo,
+        e.id_empleado AS idEmpleado,
+        e.nombre AS nombreEmpleado,
+        e.ape1 AS ape1Empleado
+    FROM DetalleMantenimiento d
+    INNER JOIN Empleado e ON e.id_empleado = d.id_empleado
+    WHERE d.id_mantenimiento = @idMantenimiento
+    ORDER BY d.id_detalle DESC;
+END;
+GO
+
+--SP_Get [Empleados y Conexion] --David
+
+-- sp_ListarEmpleados
+CREATE OR ALTER PROCEDURE sp_ListarEmpleados
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de empleados
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Empleado;
+
+    -- Devolver los registros paginados
+    SELECT 
+        e.id_empleado AS idEmpleado,
+        e.cedula,
+        e.nombre,
+        e.ape1,
+        e.ape2,
+        e.telefono,
+        e.correo_electronico AS correoElectronico,
+        e.rol,
+        @total AS total
+    FROM Empleado e
+    ORDER BY e.id_empleado
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp_ListarConexiones
+CREATE OR ALTER PROCEDURE sp_ListarConexiones
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de conexiones
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Conexion;
+
+    -- Devolver los registros paginados
+    SELECT 
+        c.id_conexion AS idConexion,
+        c.nis,
+        c.direccion_servicio AS direccionServicio,
+        c.fecha_ini AS fechaIni,
+        c.fecha_fin AS fechaFin,
+        a.id_abonado AS idAbonado,
+        a.nombre AS nombreAbonado,
+        a.ape1 AS ape1Abonado,
+        tc.id_tipoConexion AS idTipoConexion,
+        tc.nombre AS nombreTipoConexion,
+        @total AS total
+    FROM Conexion c
+    LEFT JOIN Abonado a ON a.id_abonado = c.id_abonado
+    LEFT JOIN TipoConexion tc ON tc.id_tipoConexion = c.id_tipoConexion
+    ORDER BY c.id_conexion
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
+END;
+GO
+
+-- sp_ListarRoles
+USE ASADA_SC;
+GO
+CREATE OR ALTER PROCEDURE sp_ListarRoles
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT 
+        1 AS id,
+        'Administrador' AS value,
+        'Administrador' AS nombre
+    UNION ALL
+    SELECT 
+        2 AS id,
+        'Abonado' AS value,
+        'Abonado' AS nombre
+    UNION ALL
+    SELECT 
+        3 AS id,
+        'Empleado' AS value,
+        'Empleado' AS nombre;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE sp_AbonadoFactura --DONOVAN
+  @id_abonado INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    BEGIN TRY
+        IF EXISTS (
+            SELECT 1
+            FROM Factura f
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1 -- Pendiente
+        )
+        BEGIN
+            SELECT 
+                f.id_factura,
+                f.fecha_emision,
+                f.fecha_vencimiento,
+                ef.descripcion AS estado
+            FROM Factura f
+            INNER JOIN EstadoFactura ef ON f.estadoFactura = ef.id_estadoFactura
+            WHERE f.id_abonado = @id_abonado
+              AND f.estadoFactura = 1;
+        END
+        ELSE
+        BEGIN
+            PRINT 'El abonado no tiene facturas pendientes.';
+        END
+    END TRY
+    BEGIN CATCH
+        PRINT 'Error en sp_AbonadoFactura: ' + ERROR_MESSAGE();
+    END CATCH
+END;
+GO
