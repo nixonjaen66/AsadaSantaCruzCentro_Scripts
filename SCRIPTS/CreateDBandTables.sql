@@ -956,7 +956,7 @@ GO
 
 -- Buscar periodo (Daniel)
 
-CREATE OR ALTER PROCEDURE sp_BuscarPeriodo
+CREATE OR ALTER PROCEDURE sp_BuscarPeriodo -Nuevo|Agregar
     @anio INT = NULL,
     @mes INT = NULL
 AS
@@ -974,8 +974,20 @@ BEGIN
     SELECT TOP 1
         id_periodo AS idPeriodo,
         anio,
-        mes,
-        CONVERT(VARCHAR(10), fecha_corte, 103) AS fechaCorte -- Formato dd/mm/yyyy
+        CASE mes
+            WHEN 1 THEN 'Enero'
+            WHEN 2 THEN 'Febrero'
+            WHEN 3 THEN 'Marzo'
+            WHEN 4 THEN 'Abril'
+            WHEN 5 THEN 'Mayo'
+            WHEN 6 THEN 'Junio'
+            WHEN 7 THEN 'Julio'
+            WHEN 8 THEN 'Agosto'
+            WHEN 9 THEN 'Septiembre'
+            WHEN 10 THEN 'Octubre'
+            WHEN 11 THEN 'Noviembre'
+            WHEN 12 THEN 'Diciembre'
+        END AS mes
     FROM dbo.Periodo
     WHERE 
         (@anio IS NULL OR anio = @anio) AND
@@ -2086,8 +2098,6 @@ END;
 GO
 
 -- sp_ListarRoles
-USE ASADA_SC;
-GO
 CREATE OR ALTER PROCEDURE sp_ListarRoles
 AS
 BEGIN
@@ -2107,6 +2117,53 @@ BEGIN
         3 AS id,
         'Empleado' AS value,
         'Empleado' AS nombre;
+END;
+GO
+
+-- sp_ContarPeriodos -Nuevo|Agregar
+CREATE OR ALTER PROCEDURE sp_ContarPeriodos
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT COUNT(*) AS total FROM Periodo;
+END;
+GO
+
+-- sp_ListarPeriodos -Nuevo|Agregar
+CREATE OR ALTER PROCEDURE sp_ListarPeriodos
+    @numeroInicial INT = 0,
+    @limite INT = 10
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Devolver los registros paginados
+    SELECT 
+        p.id_periodo AS idPeriodo,
+        p.anio,
+        CASE p.mes
+            WHEN 1 THEN 'Enero'
+            WHEN 2 THEN 'Febrero'
+            WHEN 3 THEN 'Marzo'
+            WHEN 4 THEN 'Abril'
+            WHEN 5 THEN 'Mayo'
+            WHEN 6 THEN 'Junio'
+            WHEN 7 THEN 'Julio'
+            WHEN 8 THEN 'Agosto'
+            WHEN 9 THEN 'Septiembre'
+            WHEN 10 THEN 'Octubre'
+            WHEN 11 THEN 'Noviembre'
+            WHEN 12 THEN 'Diciembre'
+        END AS mes
+    FROM Periodo p
+    ORDER BY p.anio DESC, p.mes DESC
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
 END;
 GO
 
