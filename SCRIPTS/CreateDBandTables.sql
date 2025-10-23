@@ -869,7 +869,7 @@ GO
 
 -- Buscar Abonado por correo, telefono, cedula y nombre (Daniel)
 
-CREATE OR ALTER PROCEDURE sp_BuscarAbonadoMasParecido
+CREATE OR ALTER PROCEDURE sp_BuscarAbonadoMasParecido  --nuevo|agregar
   @criterio NVARCHAR(100)
 AS
 BEGIN
@@ -895,7 +895,10 @@ BEGIN
         CASE WHEN a.ape2 COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 3 ELSE 0 END +
         CASE WHEN a.correo_electronico COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 4 ELSE 0 END +
         CASE WHEN a.telefono COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 2 ELSE 0 END +
-        CASE WHEN a.cedula COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 3 ELSE 0 END
+        CASE WHEN a.cedula COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 3 ELSE 0 END +
+        CASE WHEN CONCAT(a.nombre, ' ', a.ape1, 
+               CASE WHEN a.ape2 IS NOT NULL AND a.ape2 <> '' THEN ' ' + a.ape2 ELSE '' END) 
+               COLLATE SQL_Latin1_General_CP1_CI_AI LIKE '%' + @criterioNormalizado + '%' THEN 6 ELSE 0 END
       ) AS Puntuacion
     FROM dbo.Abonado a
   )
@@ -956,7 +959,7 @@ GO
 
 -- Buscar periodo (Daniel)
 
-CREATE OR ALTER PROCEDURE sp_BuscarPeriodo -Nuevo|Agregar
+CREATE OR ALTER PROCEDURE sp_BuscarPeriodo --Nuevo|Agregar
     @anio INT = NULL,
     @mes INT = NULL
 AS
@@ -2119,6 +2122,47 @@ BEGIN
         3 AS id,
         'Empleado' AS value,
         'Empleado' AS nombre;
+END;
+GO
+
+-- sp_ListarAbonados -Nuevo|Agregar
+CREATE OR ALTER PROCEDURE sp_ListarAbonados
+    @numeroInicial INT = 0,
+    @limite INT = 10,
+    @busqueda VARCHAR(100) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validar parámetros
+    IF @numeroInicial < 0 SET @numeroInicial = 0;
+    IF @limite <= 0 SET @limite = 10;
+
+    -- Obtener total de abonados
+    DECLARE @total INT;
+    SELECT @total = COUNT(*) FROM Abonado;
+
+    -- Devolver los registros paginados con búsqueda
+    SELECT 
+        a.id_abonado AS idAbonado,
+        a.cedula,
+        CONCAT(a.nombre, ' ', a.ape1, 
+               CASE WHEN a.ape2 IS NOT NULL AND a.ape2 <> '' THEN ' ' + a.ape2 ELSE '' END) AS nombreCompleto,
+        a.telefono,
+        a.correo_electronico AS correoElectronico,
+        @total AS total
+    FROM Abonado a
+    WHERE 
+        @busqueda IS NULL OR
+        LOWER(a.nombre) LIKE '%' + LOWER(@busqueda) + '%' OR
+        LOWER(a.ape1) LIKE '%' + LOWER(@busqueda) + '%' OR
+        LOWER(a.ape2) LIKE '%' + LOWER(@busqueda) + '%' OR
+        LOWER(a.telefono) LIKE '%' + LOWER(@busqueda) + '%' OR
+        LOWER(a.correo_electronico) LIKE '%' + LOWER(@busqueda) + '%' OR
+        LOWER(a.cedula) LIKE '%' + LOWER(@busqueda) + '%'
+    ORDER BY a.id_abonado
+    OFFSET @numeroInicial ROWS
+    FETCH NEXT @limite ROWS ONLY;
 END;
 GO
 
