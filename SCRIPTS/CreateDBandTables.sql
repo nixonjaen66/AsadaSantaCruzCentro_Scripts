@@ -1402,12 +1402,13 @@ BEGIN
     DECLARE @idTipoConexion INT;
     DECLARE @idTarifa INT;
     DECLARE @fechaVencimiento DATETIME;
+    DECLARE @fechaCorte DATETIME;
     DECLARE @fechaEmision DATETIME = GETDATE();
     DECLARE @cargoFijo DECIMAL(12,2) = 0;
     DECLARE @totalFactura DECIMAL(12,2) = 0;
     DECLARE @lecturasExistentes INT;
+    DECLARE @totalM3Consumidos DECIMAL(12,2) = 0;
 
-    -- Validaciones básicas
     IF NOT EXISTS (SELECT 1 FROM dbo.Medidor WHERE id_medidor = @idMedidor)
     BEGIN
         RAISERROR('El medidor especificado no existe.', 16, 1);
@@ -1420,21 +1421,17 @@ BEGIN
         RETURN;
     END
 
-    -- Verificar si hay lecturas en el periodo
-   SELECT @lecturasExistentes = COUNT(*)
-	FROM dbo.Lectura
-	WHERE id_medidor = @idMedidor
-	  AND id_periodo = @idPeriodo;
+    SELECT @lecturasExistentes = COUNT(*)
+    FROM dbo.Lectura
+    WHERE id_medidor = @idMedidor
+      AND id_periodo = @idPeriodo;
 
-	IF @lecturasExistentes = 0
-	BEGIN
-		RAISERROR('No hay lecturas registradas para este medidor en el periodo especificado.', 16, 1);
-		RETURN;
-	END
+    IF @lecturasExistentes = 0
+    BEGIN
+        RAISERROR('No hay lecturas registradas para este medidor en el periodo especificado.', 16, 1);
+        RETURN;
+    END
 
-	
-
-    -- Obtener conexión, abonado y tipo de conexión
     SELECT TOP 1
         @idConexion = mh.id_conexion,
         @idTipoConexion = c.id_tipoConexion,
@@ -1450,7 +1447,6 @@ BEGIN
         RETURN;
     END
 
-    -- Obtener tarifa activa
     SELECT TOP 1
         @idTarifa = t.id_tarifa,
         @cargoFijo = t.cargo_fijo
@@ -1466,12 +1462,17 @@ BEGIN
         RETURN;
     END
 
-    -- Fecha de corte del periodo
-    SELECT @fechaVencimiento = fecha_corte
+    SELECT 
+        @fechaVencimiento = fecha_corte,
+        @fechaCorte = fecha_corte
     FROM dbo.Periodo
     WHERE id_periodo = @idPeriodo;
 
-    -- Calcular costo por lectura y tramo
+    SELECT @totalM3Consumidos = SUM(l.lectura_actual - l.lectura_anterior)
+    FROM dbo.Lectura l
+    WHERE l.id_medidor = @idMedidor
+      AND l.id_periodo = @idPeriodo;
+
     ;WITH LecturaTramos AS (
         SELECT
             l.id_lectura,
@@ -1507,26 +1508,27 @@ BEGIN
     SELECT @totalFactura = SUM(costoTramo)
     FROM LecturaTramos;
 
-    -- Sumar cargo fijo
     SET @totalFactura = ISNULL(@totalFactura,0) + @cargoFijo;
 
-    -- Insertar factura
     INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
     VALUES (@fechaEmision, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
 
     DECLARE @idFactura INT = SCOPE_IDENTITY();
 
-    -- Relacionar todas las lecturas del periodo con la factura
     INSERT INTO dbo.Factura_Lectura (id_factura, id_lectura)
     SELECT @idFactura, id_lectura
     FROM dbo.Lectura
     WHERE id_medidor = @idMedidor
       AND id_periodo = @idPeriodo;
 
-    -- Retornar resultado
-    SELECT @idFactura AS idFactura, @totalFactura AS totalAPagar;
+    SELECT 
+        @idFactura AS idFactura,
+        @totalFactura AS totalAPagar,
+        @totalM3Consumidos AS totalM3Consumidos,
+        CONVERT(VARCHAR(10), @fechaCorte, 103) AS fechaCorte;
 END;
 GO
+
 
 -- sp listar lecturas con filtros (Daniel)
 
