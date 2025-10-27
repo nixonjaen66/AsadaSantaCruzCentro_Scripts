@@ -1427,14 +1427,14 @@ GO
 -- generar factura (Daniel) 
 
 CREATE OR ALTER PROCEDURE sp_GenerarFacturaPeriodoPorTramo
-    @idMedidor INT,
+    @idAbonado INT,
     @idPeriodo INT
 AS
 BEGIN
     SET NOCOUNT ON;
 
     DECLARE @idConexion INT;
-    DECLARE @idAbonado INT;
+    DECLARE @idMedidor INT;
     DECLARE @idTipoConexion INT;
     DECLARE @idTarifa INT;
     DECLARE @fechaVencimiento DATETIME;
@@ -1445,18 +1445,37 @@ BEGIN
     DECLARE @lecturasExistentes INT;
     DECLARE @totalM3Consumidos DECIMAL(12,2) = 0;
 
-    IF NOT EXISTS (SELECT 1 FROM dbo.Medidor WHERE id_medidor = @idMedidor)
+    -- Validar que el abonado exista
+    IF NOT EXISTS (SELECT 1 FROM dbo.Abonado WHERE id_abonado = @idAbonado)
     BEGIN
-        RAISERROR('El medidor especificado no existe.', 16, 1);
+        RAISERROR('El abonado especificado no existe.', 16, 1);
         RETURN;
     END
 
+    -- Validar que el periodo exista
     IF NOT EXISTS (SELECT 1 FROM dbo.Periodo WHERE id_periodo = @idPeriodo)
     BEGIN
         RAISERROR('El periodo especificado no existe.', 16, 1);
         RETURN;
     END
 
+    -- Obtener conexión activa del abonado y el medidor asociado
+    SELECT TOP 1
+        @idConexion = c.id_conexion,
+        @idMedidor = mh.id_medidor,
+        @idTipoConexion = c.id_tipoConexion
+    FROM dbo.Conexion c
+    INNER JOIN dbo.MedidorHistorico mh ON mh.id_conexion = c.id_conexion
+    WHERE c.id_abonado = @idAbonado
+      AND mh.fecha_retiro IS NULL;
+
+    IF @idConexion IS NULL OR @idMedidor IS NULL
+    BEGIN
+        RAISERROR('No se encontró una conexión o medidor activo para este abonado.', 16, 1);
+        RETURN;
+    END
+
+    -- Verificar que haya lecturas en el periodo
     SELECT @lecturasExistentes = COUNT(*)
     FROM dbo.Lectura
     WHERE id_medidor = @idMedidor
@@ -1468,21 +1487,7 @@ BEGIN
         RETURN;
     END
 
-    SELECT TOP 1
-        @idConexion = mh.id_conexion,
-        @idTipoConexion = c.id_tipoConexion,
-        @idAbonado = c.id_abonado
-    FROM dbo.MedidorHistorico mh
-    INNER JOIN dbo.Conexion c ON c.id_conexion = mh.id_conexion
-    WHERE mh.id_medidor = @idMedidor
-      AND mh.fecha_retiro IS NULL;
-
-    IF @idConexion IS NULL
-    BEGIN
-        RAISERROR('No se encontró una conexión activa para este medidor.', 16, 1);
-        RETURN;
-    END
-
+    -- Obtener la tarifa activa para el tipo de conexión
     SELECT TOP 1
         @idTarifa = t.id_tarifa,
         @cargoFijo = t.cargo_fijo
@@ -1498,12 +1503,14 @@ BEGIN
         RETURN;
     END
 
+    -- Fechas del periodo
     SELECT 
         @fechaVencimiento = fecha_corte,
         @fechaCorte = fecha_corte
     FROM dbo.Periodo
     WHERE id_periodo = @idPeriodo;
 
+    -- Total de m³ consumidos
     SELECT @totalM3Consumidos = SUM(l.lectura_actual - l.lectura_anterior)
     FROM dbo.Lectura l
     WHERE l.id_medidor = @idMedidor
@@ -1546,17 +1553,20 @@ BEGIN
 
     SET @totalFactura = ISNULL(@totalFactura,0) + @cargoFijo;
 
+    -- Insertar factura
     INSERT INTO dbo.Factura (fecha_emision, fecha_vencimiento, id_conexion, id_abonado, id_tarifa)
     VALUES (@fechaEmision, @fechaVencimiento, @idConexion, @idAbonado, @idTarifa);
 
     DECLARE @idFactura INT = SCOPE_IDENTITY();
 
+    -- Relacionar lecturas con factura
     INSERT INTO dbo.Factura_Lectura (id_factura, id_lectura)
     SELECT @idFactura, id_lectura
     FROM dbo.Lectura
     WHERE id_medidor = @idMedidor
       AND id_periodo = @idPeriodo;
 
+    -- Resultado final
     SELECT 
         @idFactura AS idFactura,
         @totalFactura AS totalAPagar,
